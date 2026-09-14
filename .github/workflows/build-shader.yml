@@ -1,0 +1,45 @@
+name: Build WaterSurface shader
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'WaterSurface.fx'
+      - 'WaterSurface.Common.fxh'
+      - 'WaterSurface.Dense.fxh'
+      - 'WaterSurface.Neuronal.fxh'
+      - 'WaterSurface.Debug.fxh'
+      - 'Common.fxh'
+      - 'TiltShift.fxh'
+      - 'GodRay.fxh'
+      - 'CanopyLight.fxh'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8.x
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install dotnet-mgfxc global tool
+        shell: pwsh
+        run: |
+          dotnet tool install --global dotnet-mgfxc
+          echo "$env:USERPROFILE\.dotnet\tools" >> $env:GITHUB_PATH
+
+      - name: Compile WaterSurface.fx to WaterSurface.mgfxo
+        shell: pwsh
+        run: |
+          mgfxc WaterSurface.fx WaterSurface.mgfxo /Profile:OpenGL
+
+      - name: Upload WaterSurface.mgfxo artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WaterSurface-mgfxo
+          path: WaterSurface.mgfxo
