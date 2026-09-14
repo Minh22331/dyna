@@ -73,7 +73,7 @@ float4 ComposeWaterSurface(
     float2 surfaceUv,
     float coverage,
     float2 opticalSlope,
-    float3 waterNormal,
+    float specularStrength,
     float highlightStrength)
 {
     float2 reflectionOffset = opticalSlope * ReflectionDistortionStrength;
@@ -86,13 +86,12 @@ float4 ComposeWaterSurface(
     float4 reflection = tex2D(ReflectionSampler, saturate(reflectionUv))
         * reflectionInside;
 
-    float specular = ComputeSpecular(waterNormal) * coverage;
     float3 finalWater = reflection.rgb;
-    finalWater += HighlightColor * (highlightStrength + specular);
+    finalWater += HighlightColor * (highlightStrength + specularStrength);
     finalWater *= input.Color.a;
 
     float alpha = reflection.a * input.Color.a;
-    clip(max(alpha, max(highlightStrength, specular)) - 0.001);
+    clip(max(alpha, max(highlightStrength, specularStrength)) - 0.001);
     return float4(finalWater, alpha);
 }
 
@@ -150,18 +149,19 @@ float4 WaterBottomRefractionNeuronalPS(VSOutput input) : COLOR
         shoreSegmentNormal,
         shoreSegmentSeed);
 
-    float neuronalSurface = ComputeNeuronalSurfaceField(
-        worldPosition,
-        WaterTime);
-    float2 surfaceSlope = ComputeScreenDerivativeSlope(neuronalSurface);
-    float2 opticalSlope = surfaceSlope * NeuronalOpticalStrength;
-    float3 waterNormal = ComputeSurfaceNormal(surfaceSlope);
+    // MIRROR MODE: bottom sample is no longer warped by the wave field, and
+    // lighting is flat (a (0,0,1) normal always makes ComputeLighting return
+    // 1.0, so we skip that call too). This removes the ComputeNeuronalSurfaceField
+    // call here entirely rather than just running it with fewer iterations —
+    // this was a separate instance of the same loop from the one in
+    // WaterSurfaceCompositeNeuronalPS, so it needed cutting too.
+    float2 opticalSlope = float2(0.0, 0.0);
     return ComposeWaterBottom(
         worldPosition,
         coverage,
         shoreDistance,
         opticalSlope,
-        ComputeLighting(waterNormal, WaveLightingStrength));
+        1.0);
 }
 
 float4 WaterSurfaceCompositeDensePS(VSOutput input) : COLOR
@@ -193,12 +193,13 @@ float4 WaterSurfaceCompositeDensePS(VSOutput input) : COLOR
         shadingSlope,
         opticalSlope,
         waterNormal);
+    float specular = ComputeSpecular(waterNormal) * coverage;
     return ComposeWaterSurface(
         input,
         surfaceUv,
         coverage,
         opticalSlope,
-        waterNormal,
+        specular,
         0.0);
 }
 
@@ -219,45 +220,20 @@ float4 WaterSurfaceCompositeNeuronalPS(VSOutput input) : COLOR
         shoreSegmentNormal,
         shoreSegmentSeed);
 
-    // PERF: only pay for the expensive N-iteration highlight field when the
-    // highlight is actually enabled. Previously EvaluateNeuronalFields (18
-    // iterations) always ran even when highlightStrength was discarded below;
-    // the cheap ComputeNeuronalSurfaceField (6 iterations) is enough on its own.
-    float neuronalSurface;
-    float2 surfaceSlope;
-    float highlightStrength = 0.0;
-    if (NeuronalHighlightEnabled > 0.5)
-    {
-        float rawHighlight;
-        float shapedHighlight;
-        EvaluateNeuronalFields(
-            worldPosition,
-            WaterTime,
-            neuronalSurface,
-            rawHighlight,
-            shapedHighlight);
-        surfaceSlope = ComputeScreenDerivativeSlope(neuronalSurface);
-
-        float highlightMask = smoothstep(
-            HighlightThreshold,
-            HighlightThreshold + max(HighlightWidth, 0.001),
-            shapedHighlight);
-        highlightStrength = highlightMask * coverage * HighlightIntensity;
-    }
-    else
-    {
-        neuronalSurface = ComputeNeuronalSurfaceField(worldPosition, WaterTime);
-        surfaceSlope = ComputeScreenDerivativeSlope(neuronalSurface);
-    }
-    float2 opticalSlope = surfaceSlope * NeuronalOpticalStrength;
-    float3 waterNormal = ComputeSurfaceNormal(surfaceSlope);
+    // MIRROR MODE: water surface is a flat, undistorted reflection with no
+    // ripple, no specular glint, and no procedural highlight. Both Neuronal
+    // loops (the 4-iteration surface field and the 10-iteration highlight
+    // field) are skipped entirely, not just run with fewer iterations —
+    // opticalSlope=(0,0) means their output would only ever get multiplied
+    // away anyway, so there's nothing to compute.
+    float2 opticalSlope = float2(0.0, 0.0);
     return ComposeWaterSurface(
         input,
         surfaceUv,
         coverage,
         opticalSlope,
-        waterNormal,
-        highlightStrength);
+        0.0,
+        0.0);
 }
 
 technique WaterBottomRefractionDense
